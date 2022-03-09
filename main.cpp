@@ -40,7 +40,7 @@ public:
 		xy_delta = {};
 		ui = std::make_unique<UI>(&ui_opts);
 		ui->loadTileset(
-			"/home/gyro/docs/prog/projects/kkk/curses_640x300.bmp",
+			"curses_640x300.bmp",
 			tile_w,
 			tile_h,
 			{ 255, 0, 255, 0 });
