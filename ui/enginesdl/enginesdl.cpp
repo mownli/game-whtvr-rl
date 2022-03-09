@@ -1,5 +1,4 @@
 #include "enginesdl.h"
-//#include "dbg.h"
 
 #include <string>
 #include <cassert>
@@ -43,7 +42,6 @@ EngineSDL::Renderer::Renderer(SDL_Window* window)
 				SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 	if(ptr == nullptr)
 		throwSDLError();
-	SDL_SetRenderDrawColor(this->getPtr(), 255, 0, 0, 255);
 }
 
 EngineSDL::Renderer::~Renderer() noexcept
@@ -73,10 +71,9 @@ int EngineSDL::setupFont(const std::string& path, int size)
 	return font == nullptr;
 }
 
-EngineSDL::Tileset EngineSDL::loadTileset(const std::string& path, int tile_w, int tile_h)
+EngineSDL::Tileset EngineSDL::loadTileset(const std::string& path, int tile_w, int tile_h, const SDL_Color& color_key)
 {
-	if((tile_h <= 0) || (tile_w <= 0))
-		throw std::runtime_error("Bad tileset dimensions");
+	assert((tile_h > 0) || (tile_w > 0));
 
 	Surface image(SDL_LoadBMP(path.c_str()));
 	if(image.get() == nullptr) throwSDLError();
@@ -84,30 +81,33 @@ EngineSDL::Tileset EngineSDL::loadTileset(const std::string& path, int tile_w, i
 	if((image.get()->clip_rect.h % tile_h) || (image.get()->clip_rect.w % tile_w))
 		throw std::runtime_error("Bad tileset dimensions");
 
-	Uint8 r, g, b;
-	SDL_GetRGB(*(Uint32*)image.get()->pixels, image.get()->format, &r, &g, &b);
-	SDL_SetColorKey(image.get(), SDL_TRUE, SDL_MapRGB(image.get()->format, r, g, b));
+	//SDL_SetRenderDrawColor(renderer.getPtr(), 255, 0, 0, 0);
 
 	int size = image.get()->clip_rect.w / tile_w * image.get()->clip_rect.h / tile_h;
 	std::vector<Texture> tiles(size);
 
+	Surface target(SDL_CreateRGBSurface(
+		image.get()->flags,
+		tile_w,
+		tile_h,
+		image.get()->format->BitsPerPixel,
+		image.get()->format->Rmask,
+		image.get()->format->Gmask,
+		image.get()->format->Bmask,
+		image.get()->format->Amask));
+	if(target.get() == nullptr) throwSDLError();
+	SDL_SetColorKey(
+		target.get(),
+		SDL_TRUE,
+		SDL_MapRGB(image.get()->format, color_key.r, color_key.g, color_key.b));
+
 	auto iter = tiles.begin();
+
 	for(int y = 0; y < image.get()->clip_rect.h; y += tile_h)
 	{
 		for(int x = 0; x < image.get()->clip_rect.w; x += tile_w)
 		{
-			Surface target(SDL_CreateRGBSurface(
-				image.get()->flags,
-				tile_w,
-				tile_h,
-				image.get()->format->BitsPerPixel,
-				image.get()->format->Rmask,
-				image.get()->format->Gmask,
-				image.get()->format->Bmask,
-				image.get()->format->Amask));
-			if(target.get() == nullptr) throwSDLError();
-
-			SDL_Rect rect = {x, y, tile_w, tile_h};
+			SDL_Rect rect = { x, y, tile_w, tile_h };
 			if(SDL_BlitSurface(image.get(), &rect, target.get(), 0))
 				throwSDLError();
 
@@ -181,16 +181,16 @@ EngineSDL::Texture EngineSDL::makeSquareTx(int w, int h, SDL_Color& color)
 	return Texture(this, texture_ll);
 }
 
-void EngineSDL::renderTx(const EngineSDL::Texture& texture, int x, int y) noexcept
+int EngineSDL::renderTx(const EngineSDL::Texture& texture, int x, int y) noexcept
 {
-	renderTx(&texture, x, y);
+	return renderTx(&texture, x, y);
 }
 
-void EngineSDL::renderTx(const EngineSDL::Texture* texture, int x, int y) noexcept
+int EngineSDL::renderTx(const EngineSDL::Texture* texture, int x, int y) noexcept
 {
 	//DEBUG("Rendering texture %p", texture ? texture->getPtr() : nullptr);
 	if(texture == nullptr)
-		return;
+		return 1;
 
 	// Setup the destination rectangle to be at the position we want
 	SDL_Rect dst;
@@ -198,13 +198,34 @@ void EngineSDL::renderTx(const EngineSDL::Texture* texture, int x, int y) noexce
 	dst.y = y;
 	// Query the texture to get its width and height to use
 	SDL_QueryTexture(texture->get(), NULL, NULL, &dst.w, &dst.h);
-	SDL_RenderCopy(renderer.getPtr(), texture->get(), NULL, &dst);
+	return SDL_RenderCopy(renderer.getPtr(), texture->get(), NULL, &dst);
 }
 
 void EngineSDL::setKeyboardIgnored() noexcept
 {
 	SDL_EventState(SDL_KEYDOWN, SDL_IGNORE);
 	SDL_EventState(SDL_KEYUP, SDL_IGNORE);
+}
+
+void EngineSDL::renderRect(int x, int y, int w, int h, const SDL_Color& c) noexcept
+{
+	SDL_Color old;
+	SDL_GetRenderDrawColor(renderer.getPtr(),
+					   &old.r, &old.g, &old.b,
+					   &old.a);
+
+	SDL_SetRenderDrawColor(renderer.getPtr(), c.r, c.g, c.b, c.a);
+	SDL_Rect rect = { .x = x, .y = y, .w = w, .h = h };
+	SDL_RenderFillRect(renderer.getPtr(),
+					   &rect);
+
+	SDL_SetRenderDrawColor(renderer.getPtr(), old.r, old.g, old.b, old.a);
+}
+
+void EngineSDL::setViewport(EngineSDL::Viewport* vp) noexcept
+{
+	SDL_RenderSetViewport(renderer.getPtr(), &vp->getRect());
+	current_viewport = vp;
 }
 
 EngineSDL::Texture& EngineSDL::Texture::operator=(EngineSDL::Texture&& tx) noexcept
@@ -244,10 +265,15 @@ EngineSDL::Texture::~Texture() noexcept
 	}
 }
 
-void EngineSDL::Texture::render(int x, int y) const noexcept
+int EngineSDL::Texture::render(int x, int y) const noexcept
 {
 	assert(parent);
-	parent->renderTx(this, x, y);
+	return parent->renderTx(this, x, y);
+}
+
+void EngineSDL::Texture::setColor(Uint8 r, Uint8 g, Uint8 b) noexcept
+{
+	SDL_SetTextureColorMod(ptr, r, g, b);
 }
 
 EngineSDL::Surface::~Surface() noexcept
@@ -294,4 +320,36 @@ EngineSDL::Tileset::Tileset(EngineSDL::Tileset&& ts) noexcept : tiles(std::move(
 {
 	tile_w = ts.tile_w;
 	tile_h = ts.tile_h;
+}
+
+EngineSDL::Viewport::Viewport(EngineSDL* parent, const SDL_Rect& rect) noexcept :
+	parent(parent),
+	rect(rect)
+{
+	assert(parent);
+}
+
+void EngineSDL::Viewport::lockOn() noexcept
+{
+	parent->setViewport(this);
+}
+
+int EngineSDL::Imglib::load(int flags)
+{
+	int initted = IMG_Init(flags);
+	if((initted & flags) != flags)
+		return 1;
+	else
+		return 0;
+}
+
+EngineSDL::Surface EngineSDL::loadPNG(const std::string& path)
+{
+	imglib.load(IMG_INIT_PNG);
+	SDL_Surface *image = IMG_Load(path.c_str());
+	if(!image)
+	{
+		throw std::runtime_error(IMG_GetError());
+	}
+	return Surface(image);
 }

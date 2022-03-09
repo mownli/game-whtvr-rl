@@ -3,6 +3,7 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <SDL2/SDL_image.h>
 
 #include <memory>
 #include <vector>
@@ -42,17 +43,23 @@ public:
 		SDL_Texture* get() const noexcept { return ptr; }
 		EngineSDL& getEngine() const noexcept { return *parent; }
 		void reset() noexcept { ptr = nullptr; }
-		void render(int x, int y) const noexcept;
+		int render(int x, int y) const noexcept;
+		void setColor(Uint8 r, Uint8 g, Uint8 b) noexcept;
 	};
 
-	class Surface
+	class Viewport
 	{
-		SDL_Surface* ptr = nullptr;
+		EngineSDL* parent;
+		SDL_Rect rect;
 	public:
-		Surface(SDL_Surface* surface) noexcept : ptr(surface) {};
-		~Surface() noexcept;
-
-		SDL_Surface* get() const noexcept { return ptr; }
+		Viewport(EngineSDL* parent, const SDL_Rect& rect) noexcept;
+		void lockOn() noexcept;
+		EngineSDL& getEngine() const noexcept { return *parent; }
+		int getX() const noexcept { return rect.x; }
+		int getY() const noexcept { return rect.y; }
+		int getW() const noexcept { return rect.w; }
+		int getH() const noexcept { return rect.h; }
+		const SDL_Rect& getRect() const noexcept { return rect; }
 	};
 
 	class Tileset
@@ -68,23 +75,36 @@ public:
 	};
 
 	int setupFont(const std::string& path, int size);
-	Tileset loadTileset(const std::string& path, int tile_w, int tile_h);
+	Tileset loadTileset(const std::string& path, int tile_w, int tile_h, const SDL_Color& color_key);
 	Texture makeTxFromText(const std::string& text, SDL_Color color);
 	Texture combineTx(const Texture& tx1, const Texture& tx2);
 	Texture makeSquareTx(int w, int h, SDL_Color& color);
 	void clear() noexcept { renderer.clear(); }
 	void update() noexcept { renderer.setPresent(); }
-	void renderTx(const Texture* texture, int x, int y) noexcept;
-	void renderTx(const Texture& texture, int x, int y) noexcept;
+	int renderTx(const Texture* texture, int x, int y) noexcept;
+	int renderTx(const Texture& texture, int x, int y) noexcept;
 	void setKeyboardIgnored() noexcept;
+	void renderRect(int x, int y, int w, int h, const SDL_Color& c) noexcept;
+	void setViewport(Viewport* vp) noexcept;
+	Viewport* getViewport() const noexcept { return current_viewport; }
 
 private:
+	class Surface
+	{
+		SDL_Surface* ptr = nullptr;
+	public:
+		Surface(SDL_Surface* surface) noexcept : ptr(surface) {};
+		~Surface() noexcept;
+
+		SDL_Surface* get() const noexcept { return ptr; }
+	};
+
 	class Engine
 	{
 	public:
 		Engine();
 		~Engine() noexcept;
-	};// engine; // Needs to be at the top of the class stack
+	};
 
 	class Window
 	{
@@ -108,16 +128,27 @@ private:
 		SDL_Renderer* getPtr() const noexcept { return ptr; }
 	};
 
+	class Imglib
+	{
+	  public:
+		int load(int flags);
+		~Imglib() { IMG_Quit(); }
+	};
+
 	Engine engine;
 	Window win;
 	Renderer renderer;
+	Imglib imglib;
 	std::unique_ptr<Font> font;
+
+	Viewport* current_viewport = nullptr;
 
 	std::unique_ptr<Surface> makeSurfaceFromText(
 		Font* font,
 		const std::string& text,
 		SDL_Color& color);
 	std::unique_ptr<Surface> makeSquareSurface(int w, int h, SDL_Color& color);
+	Surface loadPNG(const std::string& path);
 	static void throwSDLError() { throw std::runtime_error(SDL_GetError()); }
 };
 
